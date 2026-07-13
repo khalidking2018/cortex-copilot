@@ -2,93 +2,106 @@
 
 Cortex Copilot is a self-hosted, secure, multi-tenant AI assistant designed for an Industrial Intelligence Platform. It allows factory operators to ask questions about energy consumption in natural language, querying telemetry databases and explaining charts deterministically while strictly preventing data hallucinations and cross-tenant leakage.
 
-## Architecture & Design
+---
 
-### Components
-1. **Frontend:** React SPA built with Vite, utilizing Recharts for telemetry graphing, and styled with premium vanilla CSS.
-2. **Backend:** FastAPI Python server providing deterministic statistical API endpoints and LLM integration.
-3. **Database:** SQLite database containing factory telemetry data isolated by `tenant_id`.
-4. **LLM:** Self-hosted open-weight `qwen2.5:3b` model executed locally via **Ollama**.
+## 1. System Architecture
+
+Below is the design showing how the components interact securely under strict tenant boundaries.
+
+```mermaid
+graph TD
+    subgraph Client Layer
+        A[React Web UI] <--> B[JWT Auth Manager]
+    end
+
+    subgraph Security Boundary
+        C[FastAPI Router]
+        D[JWT Verifier & Tenant Extractor]
+    end
+
+    subgraph Data & AI Services
+        E[(SQLite Database - isolated by tenant_id)]
+        F[Deterministic Billing Tariff Engine]
+        G[Grounded Chatbot Service]
+        H[Local Ollama Server - qwen2.5:1.5b-instruct]
+    end
+
+    A -- "1. Sends credentials" --> C
+    C -- "2. Validates & Issues Token" --> B
+    A -- "3. Requests /chart or /chat with Authorization Header" --> C
+    C --> D
+    D -- "4. Decodes tenant_id (A or B)" --> E
+    D -- "5. Restricts Queries" --> F
+    D -- "6. Feeds Safe Context" --> G
+    G -- "7. Generates Answer" --> H
+```
 
 ---
 
-## Key Features & Tier 1 Completion
+## 2. Model Choice & Rationale
 
-### 1. Secure Tenant Login & Verification
-Rather than a client-side tenant selector, users authenticate through a dedicated login interface.
-- **Tenant A (Commercial):** Username `tenant_a` | Password `password_a`
-- **Tenant B (Industrial):** Username `tenant_b` | Password `password_b`
-
-### 2. Server-Side Tenant Isolation
-The server issues a cryptographically signed HMAC-SHA256 session token upon successful login. 
-- All telemetry and chat API requests must supply the `Authorization: Bearer <token>` header.
-- The server decodes the token, verifies the signature, and retrieves the corresponding `tenant_id`. This prevents Insecure Direct Object Reference (IDOR) attacks and prompt injection breaches.
-
-### 3. Grounded & Refusal Behaviour
-The AI engine implements strict grounding to avoid hallucinating facts or numbers.
-- **Date Range Check:** The dataset contains telemetry from `2026-05-19` to `2026-07-04`. If the user asks about an out-of-bounds date (e.g., *"What was my consumption in 2023?"*), the backend filters this deterministically and responds exactly with:
-  `The requested data is unavailable.`
-- **Prompt Isolation:** Telemetry statistics are queried deterministically and passed directly inside a locked prompt context. General knowledge questions that fall outside our telemetry parameters are rejected.
+* **Model Used:** `qwen2.5:1.5b-instruct` (or `qwen2.5:3b-instruct` depending on environment setup).
+* **Rationale:**
+  1. **Low Compute footprint:** Fits easily on standard modern CPUs or low-tier GPUs, making local, self-hosted execution via Ollama fast and viable.
+  2. **Excellent Instruction-Following:** Excels at respecting strict system prompt constraints, making it highly reliable for refusing out-of-bounds questions instead of hallucinating.
+  3. **Natural Language Generation:** Explains complex telemetry parameters (like Total Harmonic Distortion and Power Factor) in clear, plain-English definitions.
 
 ---
 
-## How to Run
+## 3. Fine-Tuning & Prompt Grounding Details
 
-### Option A: Unified Docker Container (Recommended)
-You can build and run both the frontend and backend served together from a single container on port 8000.
-
-1. **Build the Docker Image:**
-   ```bash
-   docker build -t cortex-copilot .
-   ```
-
-2. **Run the Docker Container:**
-   ```bash
-   docker run -d -p 8000:8000 --name cortex-app cortex-copilot
-   ```
-
-3. **Access the application:**
-   Open [http://localhost:8000](http://localhost:8000) in your browser.
+Rather than expensive weight-adjustment training, we utilized **Contextual Prompt Grounding** and **Input Sanitation Guards**:
+1. **Date-Boundary Guard:** A regex checker scans user chat queries for date patterns. If the user asks for years or dates outside our dataset (`2026-05-19` to `2026-07-04`), the backend immediately rejects the request with a deterministic refuse message.
+2. **Strict RAG Context Injection:** When a query is validated, the backend runs pre-defined SQLite queries (e.g. `get_low_pf_events` or `get_thd_metrics`) to extract actual data points. These statistics are loaded into a locked system prompt.
+3. **Structured Mappings:** Explicit guidelines are configured for voltage, current, THD, and anomalies, forcing the LLM to refuse general questions that don't match the active database rows.
 
 ---
 
-### Option B: Local Development Run
+## 4. Anomalies Discovered in the Mock Data
 
-#### 1. Backend Setup
-1. Open a terminal in the `backend` folder:
-   ```bash
-   cd backend
-   ```
-2. Activate the virtual environment:
-   - **Windows (PowerShell):** `.\venv\Scripts\Activate.ps1`
-   - **macOS/Linux:** `source venv/bin/activate`
-3. Start the FastAPI server:
-   ```bash
-   uvicorn main:app --reload --port 8000
-   ```
+The following anomalies are embedded within the SQLite telemetry logs and are dynamically surfaced to the user:
 
-#### 2. Frontend Setup
-1. Open a terminal in the `frontend` folder:
-   ```bash
-   cd frontend
-   ```
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Run the development server:
-   ```bash
-   npm run dev
-   ```
-4. Access the React app at [http://localhost:5173](http://localhost:5173).
+| Tenant | Timestamp (UTC/Local) | Metric | Anomalous Value | Impact / Consequence |
+| :--- | :--- | :--- | :--- | :--- |
+| **Tenant A** | `2026-06-03 14:00` | Power Factor | **0.72** | Dropped far below the standard 0.95 threshold. Results in reactive power (kVAR) surges and low-PF bill surcharges. |
+| **Tenant A** | `2026-06-18 10:15` | Voltage THD (Phase R) | **8.2%** | Exceeded the 5.0% IEEE-519 limit. Triggers overheating, grid instability, and transformer noise. |
+| **Tenant B** | `2026-06-03 14:00` | Power Factor | **0.81** | Low power factor event causing increased load on the sub-metered segment. |
+| **Tenant A/B**| `2026-07-04` (Peak) | Apparent Power | **~1,438.21 kVA** | Near the 1,501 kVA Contract Demand threshold. Exceeding this triggers a penal demand charge of ₹1,000/kVA/month. |
 
 ---
 
-## Testing Scenarios
+## 5. How Tenant B Was Derived
 
-1. **Verify Isolation:**
-   Log in as `tenant_a`. Attempt to query Tenant B's data using curl requests or developer tools. Note that because requests do not carry Tenant B's cryptographic signature, they are rejected or locked strictly to Tenant A.
-2. **Verify Temporal Refusal:**
-   In the chat box, ask: *"What was my consumption in 2023?"*. The system will refuse and output exactly *"The requested data is unavailable."*.
-3. **Verify Unknown Metrics Refusal:**
-   In the chat box, ask: *"How many solar panels do I have?"*. The system will refuse and output *"The requested data is unavailable."* since solar data is not present in the telemetry.
+* **Tenant B** represents a secondary industrial sub-metered factory segment. 
+* We parsed the unified database telemetry logs by filtering database rows strictly by the column value `tenant_id = 'B'`.
+* Credentials and tokens are fully segregated so Tenant B's operator only receives their corresponding sub-metered telemetry profiles.
+
+---
+
+## 6. Tenant Credentials for Judges
+
+Use the following logins to test the multi-tenant dashboard and chatbot interfaces:
+
+* **Tenant A (Commercial/Industrial Segment):**
+  * **Username:** `tenant_a`
+  * **Password:** `password_a`
+* **Tenant B (Secondary Sub-metered Segment):**
+  * **Username:** `tenant_b`
+  * **Password:** `password_b`
+
+---
+
+## 7. Known Limitations
+
+1. **SQLite Write Concurrency:** SQLite is file-based and not optimized for high-volume concurrent writes. For production time-series ingestion, a database like TimescaleDB/PostgreSQL should be used.
+2. **Local LLM Performance:** LLM inference latency depends on the host machine's hardware. On CPU-only hosts, responses may take 5–10 seconds.
+3. **Static Tariffs:** The TGSPDCL HT CAT. 1A active tariff configuration is hardcoded in the billing service. It needs a GUI database manager to edit pricing dynamic tables.
+
+---
+
+## 8. Roadmap: What We Would Do With 2 More Weeks
+
+1. **Live Telemetry Stream:** Build a WebSocket server inside FastAPI to stream raw telemetry logs (every 1 second) and animate gauges on the dashboard UI.
+2. **Dynamic Alerting Rules:** Add user-configurable threshold rules (e.g. *"Email me if THD exceeds 4% for 3 straight intervals"*).
+3. **Modbus TCP Translator:** Build a gateway plugin to read directly from physical Schneider/Siemens electrical meters using Modbus TCP or RTU protocols.
+4. **Custom-Trained LoRA:** Fine-tune a LLaMA-based model on grid standard manuals (like IEEE-519 and grid codes) to improve conversational fault diagnosis.
