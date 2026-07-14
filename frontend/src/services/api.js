@@ -12,6 +12,13 @@ api.interceptors.request.use(
       config.headers.Authorization = `Bearer ${token}`;
     }
     config.headers["ngrok-skip-browser-warning"] = "true";
+    
+    // Dynamically override baseURL if a custom endpoint is saved in localStorage
+    const customBaseURL = localStorage.getItem("cortex_api_url");
+    if (customBaseURL) {
+      config.baseURL = customBaseURL;
+    }
+    
     return config;
   },
   (error) => {
