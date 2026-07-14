@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || (typeof window !== "undefined" && window.location.port === "5173" ? "http://127.0.0.1:8000" : ""),
+  baseURL: import.meta.env.VITE_API_BASE_URL || "https://avatar-expulsion-gander.ngrok-free.dev",
 });
 
 // Interceptor to inject the token from localStorage into the Authorization header
