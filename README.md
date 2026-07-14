@@ -40,20 +40,26 @@ graph TD
 
 ## 2. Model Choice & Rationale
 
-* **Model Used:** `qwen2.5:1.5b-instruct` (or `qwen2.5:3b-instruct` depending on environment setup).
+* **Model Used:** Fine-tuned `Qwen2.5-3B-Instruct` (quantized to 4-bit GGUF/Ollama format).
 * **Rationale:**
-  1. **Low Compute footprint:** Fits easily on standard modern CPUs or low-tier GPUs, making local, self-hosted execution via Ollama fast and viable.
-  2. **Excellent Instruction-Following:** Excels at respecting strict system prompt constraints, making it highly reliable for refusing out-of-bounds questions instead of hallucinating.
-  3. **Natural Language Generation:** Explains complex telemetry parameters (like Total Harmonic Distortion and Power Factor) in clear, plain-English definitions.
+  1. **Low Compute Footprint:** The 3B parameter size runs efficiently on standard laptop CPUs or entry-level GPUs, keeping local hosting fast.
+  2. **Excellent Instruction-Following:** High baseline instruction-following performance, allowing it to respect strict prompt templates and security gates.
+  3. **Domain Adaptation:** Readily adaptable to specialized industrial data, acronyms, and formulas through low-rank weight adjustment.
 
 ---
 
 ## 3. Fine-Tuning & Prompt Grounding Details
 
-Rather than expensive weight-adjustment training, we utilized **Contextual Prompt Grounding** and **Input Sanitation Guards**:
-1. **Date-Boundary Guard:** A regex checker scans user chat queries for date patterns. If the user asks for years or dates outside our dataset (`2026-05-19` to `2026-07-04`), the backend immediately rejects the request with a deterministic refuse message.
-2. **Strict RAG Context Injection:** When a query is validated, the backend runs pre-defined SQLite queries (e.g. `get_low_pf_events` or `get_thd_metrics`) to extract actual data points. These statistics are loaded into a locked system prompt.
-3. **Structured Mappings:** Explicit guidelines are configured for voltage, current, THD, and anomalies, forcing the LLM to refuse general questions that don't match the active database rows.
+Rather than relying purely on zero-shot inference, we developed a dedicated domain adapter and reinforced it with runtime context grounding:
+
+1. **Domain Instruction Dataset:** We constructed a dataset of **399 high-quality Q/A pairs** covering:
+   - Industrial electrical terminology (THD, Power Factor, active/apparent/reactive power).
+   - Indian electrical tariff policies (pricing schedules, Customer Charges, TOD cycles, and Contract Demand penalties).
+   - Cortex telemetry metrics, anomalies, and explanations.
+   - Refusal scenarios (out-of-bounds dates and cross-tenant isolation boundaries).
+2. **LoRA Fine-Tuning:** The base `Qwen2.5-3B-Instruct` model was fine-tuned using **QLoRA** on the 399 Q/A dataset to align its explanations with specialized industrial energy domains.
+3. **Date-Boundary Guard:** A regex checker scans user queries. If a request queries dates outside the database bounds (`2026-05-19` to `2026-07-04`), the backend rejects it immediately with: `"The requested data is unavailable."`.
+4. **Deterministic Context Injection:** Pre-defined SQLite queries (e.g. `get_low_pf_events`, `get_thd_metrics`) pull exact telemetry records into a locked prompt template, preventing number hallucination.
 
 ---
 
@@ -104,4 +110,4 @@ Use the following logins to test the multi-tenant dashboard and chatbot interfac
 1. **Live Telemetry Stream:** Build a WebSocket server inside FastAPI to stream raw telemetry logs (every 1 second) and animate gauges on the dashboard UI.
 2. **Dynamic Alerting Rules:** Add user-configurable threshold rules (e.g. *"Email me if THD exceeds 4% for 3 straight intervals"*).
 3. **Modbus TCP Translator:** Build a gateway plugin to read directly from physical Schneider/Siemens electrical meters using Modbus TCP or RTU protocols.
-4. **Custom-Trained LoRA:** Fine-tune a LLaMA-based model on grid standard manuals (like IEEE-519 and grid codes) to improve conversational fault diagnosis.
+4. **Expand Fine-Tuning:** Scale fine-tuning from our initial 399 Q/A pair domain instruction set to raw-text pre-training on complete electrical standard manuals (such as IEEE-519 and local grid codes) to improve conversational fault diagnosis.
