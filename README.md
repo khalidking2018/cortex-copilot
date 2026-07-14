@@ -40,26 +40,22 @@ graph TD
 
 ## 2. Model Choice & Rationale
 
-* **Model Used:** Fine-tuned `Qwen2.5-3B-Instruct` (quantized to 4-bit GGUF/Ollama format).
+* **Model Used:** Local `qwen2.5:1.5b-instruct` (or `qwen2.5:3b-instruct`) served locally via **Ollama**.
 * **Rationale:**
-  1. **Low Compute Footprint:** The 3B parameter size runs efficiently on standard laptop CPUs or entry-level GPUs, keeping local hosting fast.
-  2. **Excellent Instruction-Following:** High baseline instruction-following performance, allowing it to respect strict prompt templates and security gates.
-  3. **Domain Adaptation:** Readily adaptable to specialized industrial data, acronyms, and formulas through low-rank weight adjustment.
+  1. **Low Compute Footprint:** Fits easily on standard modern CPUs or low-tier GPUs, making local execution on a personal laptop fast and viable.
+  2. **Excellent Instruction-Following:** High baseline instruction-following capabilities, allowing the model to respect strict system guidelines and refusal boundaries.
+  3. **Data Security & Privacy:** Keeping LLM inference local prevents sensitive industrial telemetry data from leaving the local deployment environment.
 
 ---
 
-## 3. Fine-Tuning & Prompt Grounding Details
+## 3. Deployment & Prompt Grounding Details
 
-Rather than relying purely on zero-shot inference, we developed a dedicated domain adapter and reinforced it with runtime context grounding:
+Rather than expensive weight-adjustment training, this project utilizes **Contextual Prompt Grounding**, **Input Sanitation Guards**, and **ngrok Local Tunneling**:
 
-1. **Domain Instruction Dataset:** We constructed a dataset of **399 high-quality Q/A pairs** covering:
-   - Industrial electrical terminology (THD, Power Factor, active/apparent/reactive power).
-   - Indian electrical tariff policies (pricing schedules, Customer Charges, TOD cycles, and Contract Demand penalties).
-   - Cortex telemetry metrics, anomalies, and explanations.
-   - Refusal scenarios (out-of-bounds dates and cross-tenant isolation boundaries).
-2. **LoRA Fine-Tuning:** The base `Qwen2.5-3B-Instruct` model was fine-tuned using **QLoRA** on the 399 Q/A dataset to align its explanations with specialized industrial energy domains.
-3. **Date-Boundary Guard:** A regex checker scans user queries. If a request queries dates outside the database bounds (`2026-05-19` to `2026-07-04`), the backend rejects it immediately with: `"The requested data is unavailable."`.
-4. **Deterministic Context Injection:** Pre-defined SQLite queries (e.g. `get_low_pf_events`, `get_thd_metrics`) pull exact telemetry records into a locked prompt template, preventing number hallucination.
+1. **ngrok Local Tunneling:** For deployment, we use **ngrok** to create a secure, public tunnel to the local backend on port `8000`. The frontend hosted on Vercel communicates directly with the public ngrok endpoint (`https://avatar-expulsion-gander.ngrok-free.dev`), which routes the API requests back to the local backend on the developer's laptop.
+2. **Date-Boundary Guard:** A regex checker scans user queries. If a request queries dates outside the database bounds (`2026-05-19` to `2026-07-04`), the backend immediately rejects the request with a deterministic refuse message: `"The requested data is unavailable."`.
+3. **Strict RAG Context Injection:** When a query is validated, the backend runs pre-defined SQLite queries (e.g. `get_low_pf_events` or `get_thd_metrics`) to extract actual telemetry statistics and inject them into a locked prompt template, ensuring the LLM explains actual data points without hallucination.
+4. **Structured Refusal Mappings:** Guidelines inside the prompt instruct the LLM to refuse general questions that don't match active telemetry database rows.
 
 ---
 
@@ -110,4 +106,4 @@ Use the following logins to test the multi-tenant dashboard and chatbot interfac
 1. **Live Telemetry Stream:** Build a WebSocket server inside FastAPI to stream raw telemetry logs (every 1 second) and animate gauges on the dashboard UI.
 2. **Dynamic Alerting Rules:** Add user-configurable threshold rules (e.g. *"Email me if THD exceeds 4% for 3 straight intervals"*).
 3. **Modbus TCP Translator:** Build a gateway plugin to read directly from physical Schneider/Siemens electrical meters using Modbus TCP or RTU protocols.
-4. **Expand Fine-Tuning:** Scale fine-tuning from our initial 399 Q/A pair domain instruction set to raw-text pre-training on complete electrical standard manuals (such as IEEE-519 and local grid codes) to improve conversational fault diagnosis.
+4. **Custom-Trained LoRA:** Fine-tune a LLaMA-based model on grid standard manuals (like IEEE-519 and grid codes) to improve conversational fault diagnosis.
