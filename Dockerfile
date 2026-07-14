@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy backend requirements and filter out local machine developer links (like -e paths)
 COPY backend/requirements.txt ./
-RUN grep -v "\-e " requirements.txt > clean_requirements.txt && \
+RUN sed '/^-e /d' requirements.txt > clean_requirements.txt && \
     pip install --no-cache-dir -r clean_requirements.txt
 
 # Copy backend source code and SQLite database

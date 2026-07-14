@@ -47,11 +47,65 @@ def detect_range(question_lower: str) -> str:
 
 
 def chat_with_ai(question: str, tenant: str):
+    question_lower = question.lower()
+    
+    # Enforce tenant query isolation - reject questions about other tenants/factories/segments
+    other_tenant = 'B' if tenant.upper() == 'A' else 'A'
+    other_t = other_tenant.lower()
+    
+    # Build list of regex patterns to block
+    patterns = [
+        rf"\btenant[_\s-]*{other_t}(?:s|\x27s)?\b",
+        rf"\btenant{other_t}(?:s|\x27s)?\b",
+        rf"\bfactory[_\s-]*{other_t}(?:s|\x27s)?\b",
+        rf"\bfactory{other_t}(?:s|\x27s)?\b",
+        rf"\bsegment[_\s-]*{other_t}(?:s|\x27s)?\b",
+        rf"\bsegment{other_t}(?:s|\x27s)?\b",
+        rf"\buser[_\s-]*{other_t}(?:s|\x27s)?\b",
+        rf"\buser{other_t}(?:s|\x27s)?\b",
+        r"\bother\s+tenant(?:s|\x27s)?\b",
+        r"\banother\s+tenant(?:s|\x27s)?\b",
+        r"\bdifferent\s+tenant(?:s|\x27s)?\b",
+        r"\bcross\s+tenant(?:s|\x27s)?\b",
+        r"\bother\s+factory(?:s|\x27s)?\b",
+        r"\banother\s+factory(?:s|\x27s)?\b",
+        r"\bdifferent\s+factory(?:s|\x27s)?\b",
+        r"\bcross\s+factory(?:s|\x27s)?\b",
+        r"\bcompare\s+me\b",
+        r"\bcompare\s+my\b",
+        r"\bcomparison\s+with\b",
+    ]
+    
+    # Symmetric check for single letter reference to the other tenant
+    if other_tenant == 'B':
+        # Standalone B (case-insensitive) - e.g. B's, B, except "phase B"
+        patterns.append(r"\b(?<!phase\s)b(?:s|\x27s)?\b")
+    else:
+        # For A: Standalone A (case-insensitive) at end of query or after prepositions
+        patterns.append(r"\b(?<!phase\s)a\x27s\b")
+        patterns.append(r"\b(of|for|about|regarding|to|with|than)\s+a(?:\s*[?.!]*)?$")
+        # Standalone capitalized A (excluding phase A)
+        patterns.append(r"\b(?<![pP]hase\s)A\b")
+
+    is_other_tenant_query = False
+    for p in patterns:
+        if other_tenant == 'A' and p == r"\b(?<![pP]hase\s)A\b":
+            # Match case-sensitively for capitalized A
+            if re.search(p, question):
+                is_other_tenant_query = True
+                break
+        else:
+            if re.search(p, question, re.I):
+                is_other_tenant_query = True
+                break
+            
+    if is_other_tenant_query:
+        return "i dont have acces for that"
+
     # Determine if question asks for out-of-bounds temporal data
     if is_temporal_query_out_of_bounds(question):
         return "The requested data is unavailable."
 
-    question_lower = question.lower()
     range_val = detect_range(question_lower)
 
     # ---------- Intent Detection ----------
